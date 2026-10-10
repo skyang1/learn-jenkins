@@ -1,5 +1,7 @@
 pipeline {
-    agent any
+    agent {
+        label 'docker-agent'
+    }
 
     parameters {
         choice(name: 'DEPLOY_ENV', choices: ['test', 'prod'], description: '部署环境')
