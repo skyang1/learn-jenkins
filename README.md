@@ -1,7 +1,7 @@
-# Vue + Go Jenkins CI/CD 自动化部署演示项目
+# Vue + Go (Gin) Jenkins CI/CD 自动化部署演示项目
 
 本项目是一个专门用于演练 **Jenkins 持续集成与持续部署 (CI/CD)** 的前后端分离 Demo。
-包含了完整的 **Vue 3 前端**、**Go 1.22+ 后端**、**多阶段 Docker 容器化打包配置**、**Docker Compose 编排文件** 以及生产级标准的 **Jenkinsfile (Pipeline as Code)**。
+包含了完整的 **Vue 3 前端**、**Go (Gin Web 框架) 后端**、**多阶段 Docker 容器化打包配置**、**Docker Compose 编排文件** 以及生产级标准的 **Jenkinsfile (Pipeline as Code)**。
 
 ---
 
@@ -9,18 +9,25 @@
 
 ```text
 .
-├── backend/                  # Go 后端工程
-│   ├── Dockerfile            # 后端多阶段构建 Dockerfile
-│   ├── go.mod                # Go 模块定义 (零第三方依赖，纯标准库，极速构建)
-│   ├── main.go               # REST API 服务 (含 ldflags 动态注入构建元数据)
-│   ├── main_test.go          # 单元测试 (用于 Jenkins 自动化测试阶段)
+├── backend/                  # Go 后端工程 (Gin 框架)
+│   ├── Dockerfile            # 后端多阶段构建 Dockerfile (配置 GOPROXY 加速与缓存)
+│   ├── go.mod / go.sum       # Go 依赖 (Gin Web Framework)
+│   ├── main.go               # Gin REST API 服务 (含 ldflags 动态注入构建元数据)
+│   ├── main_test.go          # 单元测试 (测试 Gin 路由与接口，用于 Jenkins 门禁测试)
 │   └── .dockerignore
 ├── frontend/                 # Vue 3 前端工程 (Vite)
 │   ├── Dockerfile            # 前端多阶段构建 Dockerfile (Node 构建 + Nginx 托管)
 │   ├── nginx.conf            # Nginx 生产反代配置 (解决 SPA 路由与 /api/ 跨域)
 │   ├── package.json          # 前端依赖配置
 │   ├── vite.config.js        # Vite 配置 (开发代理配置)
-│   ├── src/                  # 页面源码 (动态读取后端版本、提交记录、健康状态)
+│   ├── src/
+│   │   ├── components/       # 接口与数据结构测试套件组件
+│   │   │   ├── MetricsCard.vue    # Go 运行时指标 (Goroutines、堆内存、CPU、GC)
+│   │   │   ├── StatusTester.vue   # 状态码与异常熔断测试 (200, 400, 403, 404, 500)
+│   │   │   ├── EchoInspector.vue  # 请求回显与自定义 Header / JSON Body 探测
+│   │   │   └── JobsSimulator.vue  # 异步 CI/CD 流水线任务流模拟
+│   │   ├── App.vue           # 页面主框架 (Tab 切换、健康检查、流水线图示)
+│   │   └── main.js
 │   └── .dockerignore
 ├── docker-compose.yml        # Docker 编排文件 (一键启动/部署)
 ├── Jenkinsfile               # 标准 Jenkins 声明式流水线 (推荐，基于 Docker)
@@ -33,16 +40,21 @@
 
 ---
 
-## 核心特性
+## 核心特性与测试套件
 
-1. **动态版本注入 (DevOps 实战技巧)**:
+1. **主流高性能 Web 框架 (Gin)**:
+   - 基于 Gin 路由引擎，提供优雅的 JSON 序列化、中间件机制与参数校验。
+2. **丰富的后端接口测试套件 (Vue 交互组件)**:
+   - ⚡ **运行时指标 (GET /api/metrics)**: 实时探测 Go 协程数、堆分配、CPU 核数和 GC 次数。
+   - 🚨 **状态码与异常熔断 (GET /api/mock/status)**: 模拟不同 HTTP 状态，验证前端错误拦截与探针熔断。
+   - 📡 **请求回显测试 (POST /api/echo)**: 发送自定义 Header（如 CI 令牌）和复杂 JSON Body，检验网关反代和 Gin 参数绑定。
+   - 🚀 **异步任务模拟 (GET/POST /api/jobs)**: 模拟提交 CI/CD 扫描、打包等流水线子任务。
+   - 📝 **留言板数据测试 (GET/POST/DELETE /api/messages)**: 经典 CRUD 接口验证连通性。
+3. **动态版本注入 (DevOps 实战技巧)**:
    - Go 编译时利用 `-ldflags "-X main.Version=... -X main.GitCommit=... -X main.BuildTime=..."`，自动将 Jenkins 的 `${BUILD_NUMBER}`、Git 短 Hash 和构建时间注入二进制中。
-   - 打开前端页面即可实时看到本次构建的流水线元数据，直观验证部署是否真正生效。
-2. **自动化测试守门 (Quality Gate)**:
-   - 后端自带 `go test` 单元测试，流水线可设置测试不通过即时熔断阻断部署。
-3. **极简轻量，高可靠**:
-   - 后端基于 Go 1.22+ 原生强大路由与并发模型，无冗余三方包，彻底避免 CI 机器因为网络拉取包超时失败。
-   - 前后端均采用多阶段构建 (Multi-stage build)，生成的镜像体积小、安全度高。
+   - 页面实时展示流水线元数据，直观检验部署生效状态。
+4. **自动化测试守门 (Quality Gate)**:
+   - 自带针对 Gin 路由的自动化单元测试，若测试失败流水线将自动熔断阻止发布。
 
 ---
 

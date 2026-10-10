@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Build variables injected during CI/CD with -ldflags
@@ -22,67 +23,107 @@ var (
 
 type Message struct {
 	ID        int       `json:"id"`
-	Content   string    `json:"content"`
+	Content   string    `json:"content" binding:"required"`
 	Author    string    `json:"author"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-type MessageStore struct {
+type CIJob struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name" binding:"required"`
+	Branch      string    `json:"branch"`
+	Status      string    `json:"status"` // pending, running, success, failed
+	DurationSec int       `json:"duration_sec"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type AppStore struct {
 	mu       sync.RWMutex
 	messages []Message
-	nextID   int
+	nextMsgID int
+	jobs     []CIJob
+	nextJobID int
 }
 
-var store = &MessageStore{
+var store = &AppStore{
 	messages: []Message{
-		{ID: 1, Content: "Hello from Jenkins CI/CD pipeline!", Author: "DevOps Bot", CreatedAt: time.Now().Add(-10 * time.Minute)},
-		{ID: 2, Content: "Vue 3 + Go backend deployed successfully.", Author: "Antigravity", CreatedAt: time.Now().Add(-5 * time.Minute)},
+		{ID: 1, Content: "Hello from Gin Engine & Jenkins CI/CD!", Author: "DevOps Bot", CreatedAt: time.Now().Add(-10 * time.Minute)},
+		{ID: 2, Content: "Vue 3 + Gin backend online.", Author: "Antigravity", CreatedAt: time.Now().Add(-5 * time.Minute)},
 	},
-	nextID: 3,
+	nextMsgID: 3,
+	jobs: []CIJob{
+		{ID: 101, Name: "build-backend-image", Branch: "main", Status: "success", DurationSec: 42, CreatedAt: time.Now().Add(-15 * time.Minute)},
+		{ID: 102, Name: "vue-unit-tests", Branch: "main", Status: "success", DurationSec: 18, CreatedAt: time.Now().Add(-10 * time.Minute)},
+		{ID: 103, Name: "deploy-k8s-staging", Branch: "feature/ci", Status: "running", DurationSec: 65, CreatedAt: time.Now().Add(-2 * time.Minute)},
+	},
+	nextJobID: 104,
 }
 
-// corsMiddleware wraps handler to allow frontend requests in dev mode
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+// corsMiddleware configures CORS headers for local development
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Requested-With, X-Custom-Header")
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-func jsonResponse(w http.ResponseWriter, statusCode int, data any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
+		c.Next()
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{
+}
+
+func setupRouter() *gin.Engine {
+	// Set release mode if APP_ENV is production
+	if os.Getenv("APP_ENV") == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(gin.Logger())
+	r.Use(corsMiddleware())
+
+	api := r.Group("/api")
+	{
+		// 1. Health & Meta
+		api.GET("/health", handleHealth)
+		api.GET("/info", handleInfo)
+		api.GET("/metrics", handleMetrics)
+
+		// 2. Message CRUD
+		api.GET("/messages", handleGetMessages)
+		api.POST("/messages", handleCreateMessage)
+		api.DELETE("/messages/:id", handleDeleteMessage)
+
+		// 3. Request Echo & Inspector (Header/Body testing)
+		api.POST("/echo", handleEcho)
+
+		// 4. HTTP Status Code Simulator (Error & Circuit Break testing)
+		api.GET("/mock/status", handleMockStatus)
+
+		// 5. CI/CD Job Task Simulator
+		api.GET("/jobs", handleGetJobs)
+		api.POST("/jobs", handleCreateJob)
+	}
+
+	return r
+}
+
+func handleHealth(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
 		"status":    "UP",
 		"timestamp": time.Now().Format(time.RFC3339),
 		"uptime":    time.Since(startTime).String(),
 	})
 }
 
-func infoHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func handleInfo(c *gin.Context) {
 	hostname, _ := os.Hostname()
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"app":         "Vue + Go Demo Service",
+	c.JSON(http.StatusOK, gin.H{
+		"app":         "Vue + Go (Gin) Demo Service",
+		"framework":   "Gin " + gin.Version,
 		"version":     Version,
 		"git_commit":  GitCommit,
 		"build_time":  BuildTime,
@@ -93,88 +134,181 @@ func infoHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func messagesHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		store.mu.RLock()
-		msgs := make([]Message, len(store.messages))
-		copy(msgs, store.messages)
-		store.mu.RUnlock()
-		jsonResponse(w, http.StatusOK, map[string]any{
-			"code": 0,
-			"data": msgs,
-		})
+func handleMetrics(c *gin.Context) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
 
-	case http.MethodPost:
-		var req struct {
-			Content string `json:"content"`
-			Author  string `json:"author"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "Invalid request body"})
-			return
-		}
-		if req.Content == "" {
-			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "Content cannot be empty"})
-			return
-		}
-		if req.Author == "" {
-			req.Author = "Anonymous"
-		}
+	c.JSON(http.StatusOK, gin.H{
+		"num_cpu":        runtime.NumCPU(),
+		"num_goroutine":  runtime.NumGoroutine(),
+		"alloc_mb":       fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)),
+		"total_alloc_mb": fmt.Sprintf("%.2f MB", float64(m.TotalAlloc)/(1024*1024)),
+		"sys_mb":         fmt.Sprintf("%.2f MB", float64(m.Sys)/(1024*1024)),
+		"num_gc":         m.NumGC,
+	})
+}
 
-		store.mu.Lock()
-		newMsg := Message{
-			ID:        store.nextID,
-			Content:   req.Content,
-			Author:    req.Author,
-			CreatedAt: time.Now(),
-		}
-		store.nextID++
-		store.messages = append(store.messages, newMsg)
-		store.mu.Unlock()
+func handleGetMessages(c *gin.Context) {
+	store.mu.RLock()
+	msgs := make([]Message, len(store.messages))
+	copy(msgs, store.messages)
+	store.mu.RUnlock()
 
-		jsonResponse(w, http.StatusCreated, map[string]any{
-			"code": 0,
-			"msg":  "created",
-			"data": newMsg,
-		})
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": msgs,
+	})
+}
 
-	case http.MethodDelete:
-		idStr := r.URL.Query().Get("id")
-		if idStr == "" {
-			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "id parameter is required"})
-			return
-		}
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid id format"})
-			return
-		}
-
-		store.mu.Lock()
-		found := false
-		newMsgs := make([]Message, 0, len(store.messages))
-		for _, m := range store.messages {
-			if m.ID == id {
-				found = true
-			} else {
-				newMsgs = append(newMsgs, m)
-			}
-		}
-		if found {
-			store.messages = newMsgs
-		}
-		store.mu.Unlock()
-
-		if !found {
-			jsonResponse(w, http.StatusNotFound, map[string]any{"error": "message not found"})
-			return
-		}
-		jsonResponse(w, http.StatusOK, map[string]any{"code": 0, "msg": "deleted"})
-
-	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+func handleCreateMessage(c *gin.Context) {
+	var req struct {
+		Content string `json:"content" binding:"required"`
+		Author  string `json:"author"`
 	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数校验失败: content 字段必填"})
+		return
+	}
+	if req.Author == "" {
+		req.Author = "Anonymous"
+	}
+
+	store.mu.Lock()
+	newMsg := Message{
+		ID:        store.nextMsgID,
+		Content:   req.Content,
+		Author:    req.Author,
+		CreatedAt: time.Now(),
+	}
+	store.nextMsgID++
+	store.messages = append(store.messages, newMsg)
+	store.mu.Unlock()
+
+	c.JSON(http.StatusCreated, gin.H{
+		"code": 0,
+		"msg":  "created",
+		"data": newMsg,
+	})
+}
+
+func handleDeleteMessage(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法 message ID"})
+		return
+	}
+
+	store.mu.Lock()
+	found := false
+	newMsgs := make([]Message, 0, len(store.messages))
+	for _, m := range store.messages {
+		if m.ID == id {
+			found = true
+		} else {
+			newMsgs = append(newMsgs, m)
+		}
+	}
+	if found {
+		store.messages = newMsgs
+	}
+	store.mu.Unlock()
+
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到对应留言"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "deleted"})
+}
+
+func handleEcho(c *gin.Context) {
+	var body any
+	_ = c.ShouldBindJSON(&body)
+
+	headers := make(map[string]string)
+	for k, v := range c.Request.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"method":     c.Request.Method,
+		"path":       c.Request.URL.Path,
+		"query":      c.Request.URL.Query(),
+		"client_ip":  c.ClientIP(),
+		"headers":    headers,
+		"body":       body,
+		"received_at": time.Now().Format(time.RFC3339),
+	})
+}
+
+func handleMockStatus(c *gin.Context) {
+	codeStr := c.DefaultQuery("code", "200")
+	statusCode, err := strconv.Atoi(codeStr)
+	if err != nil || statusCode < 100 || statusCode > 599 {
+		statusCode = http.StatusBadRequest
+	}
+
+	message := fmt.Sprintf("模拟响应: HTTP %d (%s)", statusCode, http.StatusText(statusCode))
+	if statusCode >= 400 {
+		c.JSON(statusCode, gin.H{
+			"code":    statusCode,
+			"error":   message,
+			"details": "该接口由前端主动请求模拟，用于测试前端错误处理及 Jenkins 探测熔断",
+		})
+		return
+	}
+
+	c.JSON(statusCode, gin.H{
+		"code":    0,
+		"message": message,
+	})
+}
+
+func handleGetJobs(c *gin.Context) {
+	store.mu.RLock()
+	jobs := make([]CIJob, len(store.jobs))
+	copy(jobs, store.jobs)
+	store.mu.RUnlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": jobs,
+	})
+}
+
+func handleCreateJob(c *gin.Context) {
+	var req struct {
+		Name   string `json:"name" binding:"required"`
+		Branch string `json:"branch"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数校验失败: name 字段必填"})
+		return
+	}
+	if req.Branch == "" {
+		req.Branch = "main"
+	}
+
+	store.mu.Lock()
+	newJob := CIJob{
+		ID:          store.nextJobID,
+		Name:        req.Name,
+		Branch:      req.Branch,
+		Status:      "running",
+		DurationSec: 0,
+		CreatedAt:   time.Now(),
+	}
+	store.nextJobID++
+	store.jobs = append([]CIJob{newJob}, store.jobs...) // prepend
+	store.mu.Unlock()
+
+	c.JSON(http.StatusCreated, gin.H{
+		"code": 0,
+		"msg":  "CI Job 模拟任务已创建",
+		"data": newJob,
+	})
 }
 
 func getEnv(key, defaultVal string) string {
@@ -184,30 +318,14 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-func setupRoutes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", healthHandler)
-	mux.HandleFunc("/api/info", infoHandler)
-	mux.HandleFunc("/api/messages", messagesHandler)
-
-	return corsMiddleware(mux)
-}
-
 func main() {
 	port := getEnv("PORT", "8080")
-	handler := setupRoutes()
+	r := setupRouter()
 
-	log.Printf("Starting Vue-Go backend service on port %s...", port)
+	log.Printf("Starting Gin Web Server on port %s...", port)
 	log.Printf("Version: %s, GitCommit: %s, BuildTime: %s", Version, GitCommit, BuildTime)
 
-	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-	}
-
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }

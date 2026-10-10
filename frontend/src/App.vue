@@ -5,29 +5,29 @@
       <div class="logo-group">
         <span class="badge vue-badge">Vue 3</span>
         <span class="plus">+</span>
-        <span class="badge go-badge">Go 1.22+</span>
+        <span class="badge gin-badge">Gin Web Framework</span>
         <span class="plus">+</span>
         <span class="badge jenkins-badge">Jenkins CI/CD</span>
       </div>
-      <h1>自动化部署演示项目</h1>
-      <p class="subtitle">用于演练 Jenkins 流水线 (Checkout &rarr; Test &rarr; Build &rarr; Deploy &rarr; HealthCheck)</p>
+      <h1>自动化部署演示项目 (Gin + Vue 3)</h1>
+      <p class="subtitle">用于演练 Jenkins 流水线 (Checkout &rarr; Unit Test &rarr; Build &rarr; Deploy &rarr; Smoke Test)</p>
     </header>
 
-    <!-- Status Cards Grid -->
+    <!-- Top Status Cards Grid -->
     <div class="grid">
       <!-- Service Health -->
       <div class="card">
         <div class="card-header">
           <h3>后端健康状态</h3>
           <span :class="['status-pill', healthStatus === 'UP' ? 'online' : 'offline']">
-            {{ healthStatus === 'UP' ? '服务正常 (UP)' : '离线 (OFFLINE)' }}
+            {{ healthStatus === 'UP' ? 'Gin 服务正常 (UP)' : '离线 (OFFLINE)' }}
           </span>
         </div>
         <div class="card-body">
           <p><strong>运行时长:</strong> {{ healthData.uptime || 'N/A' }}</p>
           <p><strong>心跳时间:</strong> {{ healthData.timestamp || 'N/A' }}</p>
           <button class="btn btn-secondary" @click="fetchHealth">
-            刷新健康状态
+            刷新心跳
           </button>
         </div>
       </div>
@@ -39,55 +39,92 @@
           <span class="tag">动态注入 ldflags</span>
         </div>
         <div class="card-body">
-          <p><strong>应用名称:</strong> {{ appInfo.app || '加载中...' }}</p>
+          <p><strong>服务端框架:</strong> <span class="highlight-gin">{{ appInfo.framework || 'Gin' }}</span></p>
           <p><strong>部署版本:</strong> <span class="highlight">{{ appInfo.version || 'v1.0.0' }}</span></p>
           <p><strong>Git Commit:</strong> <code>{{ appInfo.git_commit || 'unspecified' }}</code></p>
           <p><strong>构建时间:</strong> {{ appInfo.build_time || 'unspecified' }}</p>
-          <p><strong>Go 版本:</strong> {{ appInfo.go_version || 'N/A' }}</p>
           <p><strong>运行环境:</strong> <span class="env-badge">{{ appInfo.environment || 'production' }}</span></p>
         </div>
       </div>
     </div>
 
-    <!-- Messages / CRUD Test -->
+    <!-- Backend API Testing Modules (Tabbed or Sectional) -->
     <div class="card mt-4">
       <div class="card-header">
-        <h3>交互验证：实时留言列表</h3>
-        <span class="subtext">验证前后端联调及数据读写接口</span>
+        <div>
+          <h3>后端结构与接口测试套件</h3>
+          <p class="subtext">支持多种后端数据结构、运行时监控、状态码与回显测试</p>
+        </div>
       </div>
-      <div class="card-body">
-        <form @submit.prevent="addMessage" class="form-row">
-          <input
-            v-model="newAuthor"
-            type="text"
-            placeholder="发布人 (如: Jenkins Bot)"
-            class="input input-small"
-          />
-          <input
-            v-model="newContent"
-            type="text"
-            placeholder="输入发布内容，测试接口连通性..."
-            class="input input-large"
-            required
-          />
-          <button type="submit" class="btn btn-primary" :disabled="isSubmitting">
-            {{ isSubmitting ? '发布中...' : '提交测试' }}
-          </button>
-        </form>
 
-        <div v-if="loadingMessages" class="loading">正在加载数据...</div>
+      <div class="tab-nav">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          :class="['tab-btn', currentTab === tab.id ? 'active' : '']"
+          @click="currentTab = tab.id"
+        >
+          {{ tab.name }}
+        </button>
+      </div>
 
-        <ul v-else-if="messages.length" class="message-list">
-          <li v-for="item in messages" :key="item.id" class="message-item">
-            <div class="message-meta">
-              <span class="author">{{ item.author }}</span>
-              <span class="time">{{ formatTime(item.created_at) }}</span>
-            </div>
-            <div class="message-content">{{ item.content }}</div>
-            <button class="btn-del" @click="deleteMessage(item.id)" title="删除">&times;</button>
-          </li>
-        </ul>
-        <div v-else class="empty">暂无留言数据</div>
+      <!-- Tab Contents -->
+      <div class="tab-content">
+        <!-- 1. Metrics -->
+        <div v-show="currentTab === 'metrics'">
+          <MetricsCard />
+        </div>
+
+        <!-- 2. Status Simulator -->
+        <div v-show="currentTab === 'status'">
+          <StatusTester />
+        </div>
+
+        <!-- 3. Echo Inspector -->
+        <div v-show="currentTab === 'echo'">
+          <EchoInspector />
+        </div>
+
+        <!-- 4. Jobs Simulator -->
+        <div v-show="currentTab === 'jobs'">
+          <JobsSimulator />
+        </div>
+
+        <!-- 5. Messages CRUD -->
+        <div v-show="currentTab === 'messages'" class="messages-tab">
+          <form @submit.prevent="addMessage" class="form-row">
+            <input
+              v-model="newAuthor"
+              type="text"
+              placeholder="发布人 (如: Jenkins Bot)"
+              class="input input-small"
+            />
+            <input
+              v-model="newContent"
+              type="text"
+              placeholder="输入内容测试 Gin JSON 数据读写接口..."
+              class="input input-large"
+              required
+            />
+            <button type="submit" class="btn btn-primary" :disabled="isSubmitting">
+              {{ isSubmitting ? '发布中...' : '提交测试' }}
+            </button>
+          </form>
+
+          <div v-if="loadingMessages" class="loading">正在加载数据...</div>
+
+          <ul v-else-if="messages.length" class="message-list">
+            <li v-for="item in messages" :key="item.id" class="message-item">
+              <div class="message-meta">
+                <span class="author">{{ item.author }}</span>
+                <span class="time">{{ formatTime(item.created_at) }}</span>
+              </div>
+              <div class="message-content">{{ item.content }}</div>
+              <button class="btn-del" @click="deleteMessage(item.id)" title="删除">&times;</button>
+            </li>
+          </ul>
+          <div v-else class="empty">暂无留言数据</div>
+        </div>
       </div>
     </div>
 
@@ -100,32 +137,32 @@
         <div class="pipeline-steps">
           <div class="step-card">
             <div class="step-num">1</div>
-            <h4>拉取代码</h4>
-            <p>Git Checkout 检出最新分支或 Tag 代码</p>
+            <h4>检出代码</h4>
+            <p>Git Checkout 检出最新分支或 Tag</p>
           </div>
           <div class="arrow">&rarr;</div>
           <div class="step-card">
             <div class="step-num">2</div>
-            <h4>自动化测试</h4>
-            <p>执行 <code>go test</code> 单元测试与语法检查</p>
+            <h4>Gin 自动化测试</h4>
+            <p>执行 <code>go test -v ./...</code> 单元测试</p>
           </div>
           <div class="arrow">&rarr;</div>
           <div class="step-card">
             <div class="step-num">3</div>
             <h4>编译构建</h4>
-            <p>前端 <code>npm run build</code> + 容器镜像打包</p>
+            <p>打包 Vite 静态产物 & 打包 Gin 镜像</p>
           </div>
           <div class="arrow">&rarr;</div>
           <div class="step-card">
             <div class="step-num">4</div>
             <h4>部署上线</h4>
-            <p>Docker Compose 容器滚动升级或重启生效</p>
+            <p>Docker Compose 容器滚动更新</p>
           </div>
           <div class="arrow">&rarr;</div>
           <div class="step-card">
             <div class="step-num">5</div>
             <h4>冒烟验证</h4>
-            <p>探测 <code>/api/health</code> 接口并发送通知</p>
+            <p>探测 <code>/api/health</code> 存活并发送通知</p>
           </div>
         </div>
       </div>
@@ -133,13 +170,26 @@
 
     <!-- Footer -->
     <footer class="footer">
-      <p>Vue + Go Demo for Jenkins Automation Practice &middot; 快速验证 CI/CD 流水线状态</p>
+      <p>Vue 3 + Gin Demo for Jenkins CI/CD Practice &middot; 快速验证自动化部署流水线</p>
     </footer>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import MetricsCard from './components/MetricsCard.vue'
+import StatusTester from './components/StatusTester.vue'
+import EchoInspector from './components/EchoInspector.vue'
+import JobsSimulator from './components/JobsSimulator.vue'
+
+const currentTab = ref('metrics')
+const tabs = [
+  { id: 'metrics', name: '⚡ 运行时指标 (Metrics)' },
+  { id: 'status', name: '🚨 异常与状态码探测' },
+  { id: 'echo', name: '📡 请求回显 (Echo/Headers)' },
+  { id: 'jobs', name: '🚀 任务流模拟 (Jobs)' },
+  { id: 'messages', name: '📝 留言板 CRUD 测试' }
+]
 
 const healthStatus = ref('OFFLINE')
 const healthData = ref({})
@@ -216,7 +266,7 @@ const addMessage = async () => {
 
 const deleteMessage = async (id) => {
   try {
-    const res = await fetch(`/api/messages?id=${id}`, {
+    const res = await fetch(`/api/messages/${id}`, {
       method: 'DELETE'
     })
     if (res.ok) {
@@ -273,7 +323,7 @@ onMounted(() => {
   border: 1px solid rgba(66, 184, 131, 0.4);
 }
 
-.go-badge {
+.gin-badge {
   background: rgba(0, 172, 215, 0.2);
   color: #00acd7;
   border: 1px solid rgba(0, 172, 215, 0.4);
@@ -367,6 +417,11 @@ h1 {
   font-weight: 600;
 }
 
+.highlight-gin {
+  color: #00acd7;
+  font-weight: 600;
+}
+
 code {
   background: rgba(0, 0, 0, 0.3);
   padding: 0.15rem 0.4rem;
@@ -394,6 +449,43 @@ code {
 .subtext {
   font-size: 0.85rem;
   color: var(--text-secondary);
+}
+
+/* Tabs */
+.tab-nav {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.tab-btn {
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.tab-btn.active {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+  font-weight: 600;
+}
+
+.messages-tab {
+  margin-top: 1rem;
 }
 
 .btn {

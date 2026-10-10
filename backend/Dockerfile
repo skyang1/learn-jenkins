@@ -4,8 +4,8 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 # Cache dependency downloads
-COPY go.mod ./
-# If go.sum exists: COPY go.sum ./
+ENV GOPROXY=https://goproxy.cn,direct
+COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
