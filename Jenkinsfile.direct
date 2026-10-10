@@ -1,0 +1,84 @@
+pipeline {
+    agent any
+
+    environment {
+        APP_NAME         = 'vue-go-demo'
+        BUILD_VERSION    = "1.0.${BUILD_NUMBER}"
+        DEPLOY_DIR       = "/data/apps/vue-go-demo"
+        BUILD_TIME       = ""
+        GIT_COMMIT_SHORT = ""
+    }
+
+    stages {
+        stage('准备与提取元数据') {
+            steps {
+                script {
+                    env.BUILD_TIME = sh(script: "date '+%Y-%m-%d %H:%M:%S'", returnStdout: true).trim()
+                    env.GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD || echo 'local'", returnStdout: true).trim()
+                    echo "开始直接二进制/静态产物构建: ${env.APP_NAME} (${env.BUILD_VERSION})"
+                }
+            }
+        }
+
+        stage('测试与编译后端 (Go)') {
+            steps {
+                dir('backend') {
+                    echo "1. 执行单元测试..."
+                    sh 'go test -v ./...'
+
+                    echo "2. 编译 Go 二进制程序 (注入版本参数)..."
+                    sh """
+                        CGO_ENABLED=0 go build \
+                        -ldflags="-s -w -X 'main.Version=${env.BUILD_VERSION}' -X 'main.GitCommit=${env.GIT_COMMIT_SHORT}' -X 'main.BuildTime=${env.BUILD_TIME}'" \
+                        -o server .
+                    """
+                }
+            }
+        }
+
+        stage('编译前端 (Vue)') {
+            steps {
+                dir('frontend') {
+                    echo "1. 安装前端依赖..."
+                    sh 'npm install --registry=https://registry.npmmirror.com'
+
+                    echo "2. 打包前端静态资源..."
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('发布与重启服务') {
+            steps {
+                script {
+                    echo "正在将产物同步至运行目录并在后台重启..."
+                    sh """
+                        mkdir -p ${env.DEPLOY_DIR}/frontend
+                        cp -r frontend/dist/* ${env.DEPLOY_DIR}/frontend/
+                        cp backend/server ${env.DEPLOY_DIR}/server
+
+                        # 杀死旧服务进程并启动新服务 (也可以使用 systemctl / supervisor)
+                        pkill -f "${env.DEPLOY_DIR}/server" || true
+                        nohup ${env.DEPLOY_DIR}/server > ${env.DEPLOY_DIR}/server.log 2>&1 &
+                        sleep 2
+                    """
+                }
+            }
+        }
+
+        stage('服务健康探测') {
+            steps {
+                sh 'curl -f http://127.0.0.1:8080/api/health || exit 1'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Direct 传统模式部署成功！"
+        }
+        failure {
+            echo "构建或部署失败！"
+        }
+    }
+}
